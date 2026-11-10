@@ -6,8 +6,8 @@ That is the point: you will add both, lesson by lesson, in Units 2 and 3.
 """
 
 import sqlite3
-
 from flask import Flask, g, jsonify, request
+from werkzeug.security import generate_password_hash, check_password_hash
 
 DATABASE = "recipes.db"
 
@@ -127,6 +127,63 @@ def delete_recipe(recipe_id):
         return jsonify({"error": "recipe not found"}), 404
     return "", 204
 
+@app.route("/register", methods=["POST"])
+def register():
+    data = request.get_json(silent=True)
+    if (
+        not data
+        or not data.get("username")
+        or not data.get("email")
+        or not data.get("password")
+    ):
+        return jsonify({"error": "username, email, and password are required"}), 400
+    
+    db = get_db()
+    password_hash = generate_password_hash(data["password"])
+
+    try:
+        cur = db.execute(
+            "INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)",
+            (data ["username"], data["email"], password_hash),
+        )
+        db.commit()
+    except sqlite3.IntegrityError:
+        return jsonify({"error": "username or email already exists"}), 409
+
+    return jsonify({"id": cur.lastrowid, "username":data["username"], "email": data["email"]}),201
+    
+@app.route("/login", methods=["POST"])
+def login():
+    data = request.get_json(silent=True)
+    
+    if not data or not data.get("username") or not data.get("password"):
+        return jsonify({"error": "username and password are required"}), 400
+
+    db = get_db()
+    cur = db.execute(
+        "SELECT id, username, email, password_hash FROM users WHERE username = ?",
+        (data["username"],),
+    )
+    user = cur.fetchone()
+
+    # same generic response for any bad credentials
+    invalid_response = (jsonify({"error": "invalid credentials"}), 401)
+
+    if user is None:
+        return invalid_response
+
+    if not check_password_hash(user["password_hash"], data["password"]):
+        return invalid_response
+
+    return jsonify(
+        {
+            "id": user["id"],
+            "username": user["username"],
+            "email": user["email"],
+        }
+    ), 200
+    # 3. if no user or bad password -> same 401
+    # 4. if ok -> return id + username
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=True, port=5001)
